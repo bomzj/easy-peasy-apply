@@ -59,9 +59,21 @@ log('Successfully logged in!')
 // Run Search-Apply process sequentially for all keywords
 try {
   await forEachAsync(keywordsList, async keywords => {
-    log(`Searching jobs that match "${keywords}"`)
+    log(`Searching jobs that contain "${keywords}" keywords`)
     await searchJobs(keywords)
-    await applyUntilNoMoreJobs(keywords)
+    // apply for job, if error happens then reload page and reapply again
+    await rerunIfError(
+      async () => await applyUntilNoMoreJobs(keywords),
+      async err => {
+        log(err)
+        log('\n', + 'Reloading the current page to fix the error...')
+        await page.reload()
+        log('The page reloaded. Reapplying again for the job that caused the error...')
+      },
+      3
+    )
+    // line break to separate next keywords search
+    log('\n')
   })
 } catch (e) {
   log('Unexpected error: ' + e)
@@ -111,7 +123,7 @@ async function applyUntilNoMoreJobs(keywords) {
 }
 
 async function isJobValidForApplying(keywords) {
-  const job = await currentJob()
+  const job = await selectedJob()
 
   if (job.applied) return false
   
@@ -223,7 +235,7 @@ async function clickNextUntilAppliedOrStuck() {
 }
 
 async function nextJob() {
-  const currentJobId = (await currentJob()).id
+  const currentJobId = (await selectedJob()).id
 
   const lastJobId = await page
     .locator('[data-occludable-job-id]')
@@ -268,7 +280,7 @@ async function nextJob() {
   }
 
   // Wait until job details(right pane) get in sync with job list(left pane)
-  const nextJobId = (await currentJob()).id
+  const nextJobId = (await selectedJob()).id
   await page
     .locator(
       `.job-details-jobs-unified-top-card__content--two-pane a[href*="${nextJobId}"]`
@@ -278,7 +290,7 @@ async function nextJob() {
   return true
 }
 
-async function currentJob() {
+async function selectedJob() {
   const container = page.locator('.jobs-search-results-list__list-item--active')
   
   const id = await container.getAttribute('data-job-id')
@@ -310,11 +322,31 @@ function log(msg) {
 }
 
 async function logJobAppliedStatus() {
-  const { title, company, url, applied } = await currentJob()
-  const msg = applied ? 
-    `Successfully applied for '${title}' at '${company}' ${url}`: 
-    `Failed to apply for '${title}' at '${company}' ${url}`
-  log(msg)
+  const { title, company, url, applied } = await selectedJob()
+  if (applied) {
+    fs.appendFileSync(
+      fd, 
+      `Successfully applied for '${title}' at '${company}' ${url}` + '\n', 
+      'utf8'
+    )
+    // print 'Succesfully' in green
+    console.log(
+      '\x1b[32mSuccessfully\x1b[0m', 
+      `applied for '${title}' at '${company}' ${url}`
+    )
+  } 
+  else {
+    fs.appendFileSync(
+      fd, 
+      `Failed to apply for '${title}' at '${company}' ${url}` + '\n', 
+      'utf8'
+    )
+    // print 'Failed' in red
+    console.log(
+      '\x1b[31mFailed\x1b[0m', 
+      `to apply for '${title}' at '${company}' ${url}`
+    )
+  }
 }
 
 async function forEachAsync(array, asyncFn) {
@@ -322,4 +354,15 @@ async function forEachAsync(array, asyncFn) {
     (promise, val) => promise.then(asyncFn.bind(null, val)), 
     Promise.resolve()
   )
+}
+
+async function rerunIfError(fn, onError, howManyAttempts) {
+  if (howManyAttempts <= 0) return
+
+  try {
+    return await fn()
+  } catch (err) {
+    await onError(err)
+    return await rerunIfError(fn, onError, howManyAttempts--)
+  }
 }
