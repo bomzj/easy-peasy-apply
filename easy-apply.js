@@ -54,6 +54,13 @@ await page.type('#session_key', email)
 await page.type('#session_password', password)
 await page.click('button[type=submit]')
 
+// Url should be '*/feed/' after log in, otherwise probably verification is required
+if (/\/feed\//.test(page.url()) == false) {
+  console.log('Enter verification code manually on the page, after that the bot will continue...')
+}
+// Wait until user is verified
+await page.waitForURL(/\/feed\//, { timeout: 0 })
+
 log('Successfully logged in!')
 
 // Run Search-Apply process sequentially for all keywords
