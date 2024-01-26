@@ -66,19 +66,9 @@ log('Successfully logged in!')
 // Run Search-Apply process sequentially for all keywords
 try {
   await forEachAsync(keywordsList, async keywords => {
-    log(`Searching jobs that contain "${keywords}" keywords`)
+    log(`Applying for jobs that contain "${keywords}" keywords`)
     await searchJobs(keywords)
-    // apply for job, if error happens then reload page and reapply again
-    await rerunIfError(
-      async () => await applyUntilNoMoreJobs(keywords),
-      async err => {
-        log(err)
-        log('\n', + 'Reloading the current page to fix the error...')
-        await page.reload()
-        log('The page reloaded. Reapplying again for the job that caused the error...')
-      },
-      3
-    )
+    await applyUntilNoMoreJobs(keywords)
     // line break to separate next keywords search
     log('\n')
   })
@@ -119,7 +109,14 @@ async function applyUntilNoMoreJobs(keywords) {
 
   const shouldApply = await isJobValidForApplying(keywords)
   if (shouldApply) {
-    await applyForJob()
+    try {
+      await applyForJob() ? jobsAppliedCount++ : jobsFailedCount++
+    } catch (err) {
+      log(err)
+      jobsFailedCount++
+      // reload page and run again
+      await page.reload()
+    }
     await logJobAppliedStatus()
     // after applying, wait a bit before moving to next job
     await randomWait(2000, 3000)
@@ -188,11 +185,8 @@ async function applyForJob() {
 
   if (applied) {
     // Wait for follow-up Done/Add Skills modal to close,
-    // that appears in a few seconds after Easy Modal closed
+    // that might appear in a few seconds after Easy Modal closed
     await page.click('[data-test-modal-close-btn]', { timeout: 5000 }).catch(() => {})
-
-    // Update stats
-    jobsAppliedCount++
   }
   else {
     // Close Easy Apply Modal
@@ -202,9 +196,6 @@ async function applyForJob() {
       .locator('[data-test-modal-id="data-test-easy-apply-discard-confirmation"]')
       .locator('[data-control-name="discard_application_confirm_btn"]')
       .click()
-    
-    // Update stats
-    jobsFailedCount++
   }
   
   return applied
@@ -229,7 +220,7 @@ async function clickNextUntilAppliedOrStuck() {
     await easyApplyModal
     .locator('[for="follow-company-checkbox"]')
     .click()
-    .catch(() => log(`Couldn't uncheck Follow Company checkbox.`))
+    .catch(async () => log(`Couldn't uncheck Follow Company checkbox.`))
   
   // Click next step
   await easyApplyModal.locator('.artdeco-button--primary').click()
@@ -361,15 +352,4 @@ async function forEachAsync(array, asyncFn) {
     (promise, val) => promise.then(asyncFn.bind(null, val)), 
     Promise.resolve()
   )
-}
-
-async function rerunIfError(fn, onError, howManyAttempts) {
-  if (howManyAttempts <= 0) return
-
-  try {
-    return await fn()
-  } catch (err) {
-    await onError(err)
-    return await rerunIfError(fn, onError, howManyAttempts--)
-  }
 }
